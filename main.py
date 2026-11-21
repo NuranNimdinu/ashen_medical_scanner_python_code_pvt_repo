@@ -601,7 +601,7 @@ if __name__ == "__main__":
     time.sleep(0.5)
     
     ## initialize the cameras
-    thermal_camera = MLX90640_CAM_DRIVER(0x33, "")
+    thermal_camera = MLX90640_CAM_DRIVER(0x33)
     rgb_camera = CAMERA_DRIVER((1280, 720), rotation=90, raspCam=True, cameraID=0)
 
     ## initialize the server data structure
