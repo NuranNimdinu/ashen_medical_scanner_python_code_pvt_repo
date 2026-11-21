@@ -330,10 +330,11 @@ class ImageProcessWorker(threading.Thread):
 
     def _done_scan(self):
         self.is_scanning = False 
+        led.blink(0xE3009B, 0.2, 3)
         led.set_static_color(0x00E372)
 
         th_conf, th_label = self.thermal_predictor.predict(self.thermal_raw_buffer[0], self.thermal_raw_buffer[1])
-        rgb_conf, rgb_label, rgb_info = self.WoundPredictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], return_details=True)
+        rgb_conf, rgb_label, rgb_info = self.rgb_predictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], return_details=True)
 
         self.rgb_image_buffer.clear()
         self.thermal_raw_buffer.clear()
@@ -348,6 +349,7 @@ class ImageProcessWorker(threading.Thread):
 
         ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Scan Completed!"}))
 
+        camera_axis.travel_to_position(position_mm=global_settings["camera_left_position"], rate_mm_s=global_settings["camera move_rate"])
         time.sleep(3)
         led.set_static_color(0x008000)
         ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Ready!"}))
