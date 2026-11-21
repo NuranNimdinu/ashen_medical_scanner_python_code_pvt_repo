@@ -4,11 +4,32 @@
     model = FootPredictor("foot_model.tflite", "pi_config.json")
     confidence, label = model.predict(left_temps, right_temps)   # 2D numpy arrays in °C
     confidence, label = model.predict_frame(mlx_frame)           # one 24x32 frame with both feet
+    model.predict(left_temps, right_temps, save_path="results")   # -> results/thermal_20261121_234700.txt
 """
+import os
 import json
+from datetime import datetime
 import numpy as np
 from scipy import ndimage
-from ai_edge_litert.interpreter import Interpreter
+
+try:
+    from ai_edge_litert.interpreter import Interpreter
+except ImportError:
+    from tflite_runtime.interpreter import Interpreter
+
+
+def _output_path(save_path, stem, default_ext, allowed_exts):
+    """Folder -> folder/<stem>_YYYYmmdd_HHMMSS<ext> (never overwrites). A full file path is used as is."""
+    if os.path.splitext(save_path)[1].lower() in allowed_exts:
+        path = save_path
+    else:
+        name = f"{stem}_{datetime.now():%Y%m%d_%H%M%S}"
+        path = os.path.join(save_path, name + default_ext)
+        i = 1
+        while os.path.exists(path):                       # two saves in the same second
+            path = os.path.join(save_path, f"{name}_{i}{default_ext}"); i += 1
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    return path
 
 
 class FootPredictor:
@@ -42,27 +63,59 @@ class FootPredictor:
         self._out_idx = self.interp.get_output_details()[0]["index"]
 
     # ------------------------------------------------------------------ public API
-    def predict(self, left, right, return_details=False):
+    def predict(self, left, right, save_path=None, return_details=False, file_prefix=None):
         """left, right: 2D numpy arrays of temperatures (°C, or Kelvin - auto-converted).
+        save_path: folder to save a .txt report in (file name generated with a timestamp,
+                   e.g. thermal_20261121_234700.txt). None = don't save.
+        file_prefix: optional start of the file name, e.g. "patient01" -> patient01_thermal_<time>.txt
         Returns (confidence, label); confidence = probability of the returned label (0.5-1.0)."""
         p_dm, feats = self._p_dm(left, right)
         is_pos = p_dm >= self.threshold
         label = self.LABEL_POSITIVE if is_pos else self.LABEL_NEGATIVE
         confidence = p_dm if is_pos else 1.0 - p_dm
+        details = {"p_dm": p_dm, "threshold": self.threshold,
+                   "max_lr_diff_C": float(feats["reg_max_absdiff"]),
+                   "asymmetry_flag": bool(feats["reg_max_absdiff"] > 2.2),
+                   "left_mean_C": float(feats["L_mean"]), "right_mean_C": float(feats["R_mean"]),
+                   "saved_to": None}
+        if save_path:
+            details["saved_to"] = self._save_report(save_path, confidence, label, details, file_prefix)
         if return_details:
-            return confidence, label, {"p_dm": p_dm, "threshold": self.threshold,
-                                       "max_lr_diff_C": float(feats["reg_max_absdiff"]),
-                                       "asymmetry_flag": bool(feats["reg_max_absdiff"] > 2.2)}
+            return confidence, label, details
         return confidence, label
 
-    def predict_frame(self, frame, return_details=False):
+    def predict_frame(self, frame, save_path=None, return_details=False, file_prefix=None):
         """frame: one 2D matrix containing both feet side by side (e.g. MLX90640 24x32)."""
         frame = np.asarray(frame, dtype=float)
         h = frame.shape[1] // 2
         left, right = frame[:, :h], frame[:, h:]
         if self.swap_frame_sides:
             left, right = right, left
-        return self.predict(left, right, return_details)
+        return self.predict(left, right, save_path, return_details, file_prefix)
+
+    # ------------------------------------------------------------------ text report
+    def _save_report(self, save_path, confidence, label, d, file_prefix=None):
+        stem = f"{file_prefix}_thermal" if file_prefix else "thermal"
+        save_path = _output_path(save_path, stem, ".txt", (".txt", ".log"))
+        lines = [
+            "THERMAL FOOT ANALYSIS",
+            "=" * 40,
+            f"Date/time          : {datetime.now():%Y-%m-%d %H:%M:%S}",
+            f"Prediction         : {'POSITIVE' if label == self.LABEL_POSITIVE else 'NEGATIVE'}",
+            f"Label              : {label}",
+            f"Confidence         : {confidence:.1%}",
+            f"P(DM pattern)      : {d['p_dm']:.4f}",
+            f"Decision threshold : {d['threshold']:.2f}",
+            "-" * 40,
+            f"Left foot mean     : {d['left_mean_C']:.2f} °C",
+            f"Right foot mean    : {d['right_mean_C']:.2f} °C",
+            f"Max L-R difference : {d['max_lr_diff_C']:.2f} °C (regional)",
+            f"Asymmetry > 2.2 °C : {'YES - check this foot clinically' if d['asymmetry_flag'] else 'no'}",
+            "",
+        ]
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        return os.path.abspath(save_path)
 
     # ------------------------------------------------------------------ inference
     def _p_dm(self, left, right):
@@ -161,13 +214,12 @@ class FootPredictor:
         return img, self._features(L, ml, R, mr)
 
 
-# example
-
 # if __name__ == "__main__":
-#     # quick demo with two CSV files:  python3 foot_predictor.py left.csv right.csv
+#     # quick demo:  python3 foot_predictor.py left.csv right.csv [results_folder]
 #     import sys
 #     model = FootPredictor("foot_model.tflite", "pi_config.json")
 #     left = np.genfromtxt(sys.argv[1], delimiter=",")
 #     right = np.genfromtxt(sys.argv[2], delimiter=",")
-#     conf, label = model.predict(left, right)
+#     out = sys.argv[3] if len(sys.argv) > 3 else None          # optional: folder for the .txt report
+#     conf, label = model.predict(left, right, save_path=out)
 #     print(f"{label}  (confidence {conf:.1%})")

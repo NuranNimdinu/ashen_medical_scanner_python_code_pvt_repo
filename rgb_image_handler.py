@@ -5,7 +5,10 @@
     confidence, label = model.predict(left_rgb, right_rgb)          # both feet
     confidence, label = model.predict_single(foot_rgb)              # one image
     confidence, label, info = model.predict(left_rgb, right_rgb, return_details=True)
+    model.predict(left_rgb, right_rgb, save_path="results")   # -> results/wound_20261121_234700.jpg
 """
+import os
+from datetime import datetime
 import numpy as np
 
 try:
@@ -14,9 +17,23 @@ except ImportError:
     from tflite_runtime.interpreter import Interpreter
 
 try:
-    from PIL import Image                                   # bilinear resize, same as YOLO training
+    from PIL import Image, ImageDraw, ImageFont             # resize like YOLO training + annotated images
 except ImportError:
-    Image = None
+    Image = ImageDraw = ImageFont = None
+
+
+def _output_path(save_path, stem, default_ext, allowed_exts):
+    """Folder -> folder/<stem>_YYYYmmdd_HHMMSS<ext> (never overwrites). A full file path is used as is."""
+    if os.path.splitext(save_path)[1].lower() in allowed_exts:
+        path = save_path
+    else:
+        name = f"{stem}_{datetime.now():%Y%m%d_%H%M%S}"
+        path = os.path.join(save_path, name + default_ext)
+        i = 1
+        while os.path.exists(path):                       # two saves in the same second
+            path = os.path.join(save_path, f"{name}_{i}{default_ext}"); i += 1
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    return path
 
 
 class WoundPredictor:
@@ -49,25 +66,37 @@ class WoundPredictor:
         self.size = int(shp[2]) if self.nchw else int(shp[1])
 
     # ------------------------------------------------------------------ public API
-    def predict(self, left, right, return_details=False):
+    def predict(self, left, right, save_path=None, return_details=False, file_prefix=None):
         """left, right: HxWx3 uint8 images of each foot.
+        save_path: folder to save the annotated image in (both feet side by side, boxes + result text;
+                   file name generated with a timestamp, e.g. wound_20261121_234700.jpg). None = don't save.
+        file_prefix: optional start of the file name, e.g. "patient01" -> patient01_wound_<time>.jpg
         Returns (confidence, label). Wound found -> confidence = best wound score;
         no wound -> confidence = 1 - best (rejected) score."""
         res_l, res_r = self._run(left), self._run(right)
         boxes = res_l["boxes"] + res_r["boxes"]
         best = max(res_l["best_score"], res_r["best_score"])
         confidence, label = self._decide(boxes, best)
+        info = {"left": res_l["boxes"], "right": res_r["boxes"],
+                "left_wound": bool(res_l["boxes"]), "right_wound": bool(res_r["boxes"]),
+                "best_score": best, "conf_threshold": self.conf_threshold, "saved_to": None}
+        if save_path:
+            panels = [(self._prep(left), res_l["boxes"], "LEFT FOOT"),
+                      (self._prep(right), res_r["boxes"], "RIGHT FOOT")]
+            info["saved_to"] = self._save_annotated(panels, confidence, label, save_path, file_prefix)
         if return_details:
-            return confidence, label, {"left": res_l["boxes"], "right": res_r["boxes"],
-                                       "left_wound": bool(res_l["boxes"]), "right_wound": bool(res_r["boxes"]),
-                                       "best_score": best, "conf_threshold": self.conf_threshold}
+            return confidence, label, info
         return confidence, label
 
-    def predict_single(self, image, return_details=False):
+    def predict_single(self, image, save_path=None, return_details=False, file_prefix=None):
         res = self._run(image)
         confidence, label = self._decide(res["boxes"], res["best_score"])
+        info = {"boxes": res["boxes"], "best_score": res["best_score"], "saved_to": None}
+        if save_path:
+            info["saved_to"] = self._save_annotated([(self._prep(image), res["boxes"], "FOOT")],
+                                                    confidence, label, save_path, file_prefix)
         if return_details:
-            return confidence, label, {"boxes": res["boxes"], "best_score": res["best_score"]}
+            return confidence, label, info
         return confidence, label
 
     def detect(self, image):
@@ -94,7 +123,8 @@ class WoundPredictor:
             return max(b["conf"] for b in boxes), self.LABEL_POSITIVE
         return 1.0 - best_score, self.LABEL_NEGATIVE
 
-    def _run(self, image):
+    def _prep(self, image):
+        """Any input image -> HxWx3 uint8 RGB."""
         img = np.asarray(image)
         if img.ndim == 2:
             img = np.stack([img] * 3, -1)
@@ -103,6 +133,10 @@ class WoundPredictor:
             img = img[..., ::-1]
         if img.dtype != np.uint8:
             img = np.clip(img * (255 if img.max() <= 1.0 else 1), 0, 255).astype(np.uint8)
+        return np.ascontiguousarray(img)
+
+    def _run(self, image):
+        img = self._prep(image)
 
         x, scale, (px, py) = self._letterbox(img)
         x = x.astype(np.float32) / 255.0
@@ -136,6 +170,98 @@ class WoundPredictor:
             out.append({"box": tuple(float(v) for v in b), "conf": float(s), "label": name})
         out.sort(key=lambda d: -d["conf"])
         return {"boxes": out, "best_score": float(best)}
+
+    # ------------------------------------------------------------------ annotated image
+    COLOR_WOUND = (230, 40, 40)
+    COLOR_OK = (30, 160, 70)
+
+    @staticmethod
+    def _font(size, bold=False):
+        names = ["DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"]
+        dirs = ["/usr/share/fonts/truetype/dejavu/", ""]
+        for d in dirs:
+            for n in names:
+                try:
+                    return ImageFont.truetype(d + n, size)
+                except (OSError, IOError):
+                    pass
+        try:
+            return ImageFont.load_default(size=size)          # Pillow >= 10.1
+        except TypeError:
+            return ImageFont.load_default()
+
+    @staticmethod
+    def _text_size(draw, text, font):
+        x0, y0, x1, y1 = draw.textbbox((0, 0), text, font=font)
+        return x1 - x0, y1 - y0
+
+    def _draw_panel(self, img, boxes, title, height):
+        """One foot image -> PIL image of fixed height with boxes, box labels and a title bar."""
+        pil = Image.fromarray(img)
+        scale = height / pil.height
+        pil = pil.resize((max(1, int(round(pil.width * scale))), height), Image.BILINEAR)
+        d = ImageDraw.Draw(pil)
+        lw = max(2, height // 150)
+        f_box = self._font(max(12, height // 28), bold=True)
+        for b in boxes:
+            x1, y1, x2, y2 = [v * scale for v in b["box"]]
+            d.rectangle([x1, y1, x2, y2], outline=self.COLOR_WOUND, width=lw)
+            txt = f"{b['label']} {b['conf']:.2f}"
+            tw, th = self._text_size(d, txt, f_box)
+            ty = y1 - th - 2 * lw if y1 - th - 2 * lw >= 0 else y1 + lw   # above box, or inside if no room
+            d.rectangle([x1, ty, x1 + tw + 2 * lw, ty + th + 2 * lw], fill=self.COLOR_WOUND)
+            d.text((x1 + lw, ty + lw - d.textbbox((0, 0), txt, font=f_box)[1]), txt,
+                   fill=(255, 255, 255), font=f_box)
+        # title bar on top of the panel
+        f_t = self._font(max(12, height // 22), bold=True)
+        n = len(boxes)
+        title = f"{title}: {n} wound{'s' if n != 1 else ''}" if n else f"{title}: no wound"
+        tw, th = self._text_size(d, title, f_t)
+        pad = max(4, height // 80)
+        bar = Image.new("RGB", (pil.width, th + 2 * pad), self.COLOR_WOUND if n else self.COLOR_OK)
+        ImageDraw.Draw(bar).text((pad, pad - d.textbbox((0, 0), title, font=f_t)[1]), title,
+                                 fill=(255, 255, 255), font=f_t)
+        out = Image.new("RGB", (pil.width, bar.height + pil.height))
+        out.paste(bar, (0, 0)); out.paste(pil, (0, bar.height))
+        return out
+
+    def _save_annotated(self, panels, confidence, label, save_path, file_prefix=None, panel_height=480):
+        if Image is None:
+            raise RuntimeError("Saving images needs Pillow: sudo apt install python3-pil")
+        stem = f"{file_prefix}_wound" if file_prefix else "wound"
+        save_path = _output_path(save_path, stem, ".jpg", (".jpg", ".jpeg", ".png"))
+        h = min(panel_height, max(p[0].shape[0] for p in panels))
+        tiles = [self._draw_panel(img, boxes, title, h) for img, boxes, title in panels]
+        gap = max(4, h // 60)
+        W = sum(t.width for t in tiles) + gap * (len(tiles) + 1)
+        f_big, f_small = self._font(max(16, h // 14), bold=True), self._font(max(11, h // 30))
+        tmp = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        header = f"{label}   ({confidence:.1%} confidence)"
+        footer = (f"{datetime.now():%Y-%m-%d %H:%M:%S}   |   threshold {self.conf_threshold:.2f}   |   "
+                  f"boxes: " + ", ".join(f"{t.split()[0].lower()} {len(b)}" for _, b, t in panels))
+        _, hh = self._text_size(tmp, header, f_big)
+        _, fh = self._text_size(tmp, footer, f_small)
+        pad = max(6, h // 40)
+        H_head, H_foot = hh + 2 * pad, fh + 2 * pad
+        W = max(W, self._text_size(tmp, header, f_big)[0] + 2 * pad,
+                self._text_size(tmp, footer, f_small)[0] + 2 * pad)
+        th = max(t.height for t in tiles)
+        canvas = Image.new("RGB", (W, H_head + th + gap * 2 + H_foot), (25, 25, 25))
+        d = ImageDraw.Draw(canvas)
+        positive = label == self.LABEL_POSITIVE
+        d.rectangle([0, 0, W, H_head], fill=self.COLOR_WOUND if positive else self.COLOR_OK)
+        d.text((pad, pad - d.textbbox((0, 0), header, font=f_big)[1]), header, fill=(255, 255, 255), font=f_big)
+        x = gap
+        for t in tiles:
+            canvas.paste(t, (x, H_head + gap)); x += t.width + gap
+        fy = H_head + th + 2 * gap
+        d.text((pad, fy + pad - d.textbbox((0, 0), footer, font=f_small)[1]), footer,
+               fill=(220, 220, 220), font=f_small)
+        if save_path.lower().endswith((".jpg", ".jpeg")):
+            canvas.save(save_path, quality=90)
+        else:
+            canvas.save(save_path)
+        return os.path.abspath(save_path)
 
     def _letterbox(self, img):
         h, w = img.shape[:2]
@@ -183,10 +309,13 @@ class WoundPredictor:
         return np.array(keep, dtype=int)
 
 
-# if __name__ == "__main__":
-#     # demo:  python3 wound_predictor.py wound.tflite left.jpg right.jpg
-#     import sys
-#     model = WoundPredictor(sys.argv[1], class_names=["wound"])
-#     left, right = (np.asarray(Image.open(p).convert("RGB")) for p in sys.argv[2:4])
-#     conf, label, info = model.predict(left, right, return_details=True)
-#     print(f"{label}  (confidence {conf:.1%})  left={info['left_wound']} right={info['right_wound']}")
+if __name__ == "__main__":
+    # demo:  python3 wound_predictor.py wound.tflite left.jpg right.jpg
+    import sys
+    model = WoundPredictor(sys.argv[1], class_names=["wound"])
+    left, right = (np.asarray(Image.open(p).convert("RGB")) for p in sys.argv[2:4])
+    out = sys.argv[4] if len(sys.argv) > 4 else None          # optional: folder for annotated image
+    conf, label, info = model.predict(left, right, save_path=out, return_details=True)
+    print(f"{label}  (confidence {conf:.1%})  left={info['left_wound']} right={info['right_wound']}")
+    if info["saved_to"]:
+        print("saved:", info["saved_to"])

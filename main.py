@@ -181,12 +181,6 @@ def check_for_updates_and_restart():
 ### image hanlder thread
 class ImageProcessWorker(threading.Thread):
     current_scan_folder_path = ""
-    current_scan_num_folder_path = ""
-    current_scan_count = 0
-    current_scan_max_thermal_conf_L = 0.0
-    current_scan_max_thermal_conf_R = 0.0
-    current_scan_max_rgb_conf_L = 0.0
-    current_scan_max_rgb_conf_R = 0.0
     rgb_image_buffer = []
     thermal_raw_buffer = []
 
@@ -315,12 +309,6 @@ class ImageProcessWorker(threading.Thread):
         ws_tx_str(json.dumps({"T":"RESULT", "START": ""}))
         led.set_static_color(0xff0088)
 
-        self.current_scan_count = 0
-        self.current_scan_max_thermal_conf_L = 0.0
-        self.current_scan_max_thermal_conf_R = 0.0
-        self.current_scan_max_rgb_conf_L = 0.0
-        self.current_scan_max_rgb_conf_R = 0.0
-
         self.current_scan_folder_path = create_unique_folder(global_settings["save_images_base_path"], "patient")
         thermal_camera.change_save_path(self.current_scan_folder_path, self.current_scan_folder_path)
         rgb_camera.change_save_path(self.current_scan_folder_path, self.current_scan_folder_path)
@@ -333,8 +321,8 @@ class ImageProcessWorker(threading.Thread):
         led.blink(0xE3009B, 0.2, 3)
         led.set_static_color(0x00E372)
 
-        th_conf, th_label = self.thermal_predictor.predict(self.thermal_raw_buffer[0], self.thermal_raw_buffer[1])
-        rgb_conf, rgb_label, rgb_info = self.rgb_predictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], return_details=True)
+        th_conf, th_label = self.thermal_predictor.predict(self.thermal_raw_buffer[0], self.thermal_raw_buffer[1], self.current_scan_folder_path)
+        rgb_conf, rgb_label = self.rgb_predictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], self.current_scan_folder_path)
 
         self.rgb_image_buffer.clear()
         self.thermal_raw_buffer.clear()
