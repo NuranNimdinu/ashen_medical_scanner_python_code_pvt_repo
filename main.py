@@ -35,8 +35,8 @@ global_settings = {
     "THERMAL_MODEL_PATH" : "/home/rasp4/Desktop/medical_scanner/medical_scanner/image_models/foot_model.tflite",
     "THERMAL_CONFIG_PATH" : "/home/rasp4/Desktop/medical_scanner/medical_scanner/image_models/thermal_config.json",
     "RGB_MODEL_THREAHOLD" : 0.5,
-    "RGB_MODEL_PATH" : "de",
-    "RGB_MODEL_CLASS" : "wound",
+    "RGB_MODEL_PATH" : "/home/rasp4/Desktop/medical_scanner/medical_scanner/image_models/wound.tflite",
+    "RGB_MODEL_CONFIG_PATH" : "/home/rasp4/Desktop/medical_scanner/medical_scanner/image_models/wound_classes.json",
     "save_images_base_path" : "medical_scanner_data/",
     "camera_left_position" : 10.0,
     "camera_right_position" : 200.0,
@@ -198,7 +198,7 @@ class ImageProcessWorker(threading.Thread):
         self._ws_server = server_st
 
         self.thermal_predictor = FootPredictor(model_path=global_settings["THERMAL_MODEL_PATH"], config_path=global_settings["THERMAL_CONFIG_PATH"], threshold=global_settings["THERMAL_MODEL_THREAHOLD"])
-        # self.rgb_predictor = WoundPredictor(model_path=global_settings["RGB_MODEL_PATH"], class_names=[global_settings["RGB_MODEL_CLASS"]] conf_threshold=global_settings["RGB_MODEL_THREAHOLD"])
+        self.rgb_predictor = WoundPredictor(model_path=global_settings["RGB_MODEL_PATH"], class_names=json.load(open(global_settings["RGB_MODEL_CONFIG_PATH"])), conf_threshold=global_settings["RGB_MODEL_THREAHOLD"])
 
     def stop(self):
         self._stop_worker.set()
@@ -333,8 +333,7 @@ class ImageProcessWorker(threading.Thread):
         led.set_static_color(0x00E372)
 
         th_conf, th_label = self.thermal_predictor.predict(self.thermal_raw_buffer[0], self.thermal_raw_buffer[1])
-        # rgb_conf, rgb_label, rgb_info = self.WoundPredictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], return_details=True)
-        rgb_conf = 0
+        rgb_conf, rgb_label, rgb_info = self.WoundPredictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], return_details=True)
 
         self.rgb_image_buffer.clear()
         self.thermal_raw_buffer.clear()
@@ -477,11 +476,8 @@ def cleanup_resources():
     led.blink(0x000080, 0.4)
     time.sleep(0.5)
     
-    # try:
-    #     push_btn.cleanup()
-    #     push_btn.join(timeout=3)
-    # except Exception as e:
-    #     print(f"Error stopping led thread: {e}")
+    camera_axis.travel_to_position(position_mm=global_settings["camera_left_position"], rate_mm_s=global_settings["camera move_rate"])
+    camera_axis.close()
     
     # Cancel the camera stream task
     try:

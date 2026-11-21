@@ -614,7 +614,7 @@
                 websocket.send(JSON.stringify({"T": "GET_SETTINGS"}));
                 
                 toggleLiveFeed();
-                toggleFlash(); // Ensure flashlight state is synced
+                // toggleFlash(); // Ensure flashlight state is synced
             };
 
             websocket.onclose = function () {
