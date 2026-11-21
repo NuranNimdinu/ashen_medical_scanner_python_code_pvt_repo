@@ -231,7 +231,7 @@ class ImageProcessWorker(threading.Thread):
                 camera_axis.travel_to_position(position_mm=global_settings["camera_left_position"], rate_mm_s=global_settings["camera move_rate"])
                 led.blink(0xFF0000, 0.1, 1)
                 led.set_static_color(0xffffff)
-                time.sleep(0.5)
+                time.sleep(1)
                 
                 th_img = None
                 while th_img is None:
@@ -268,7 +268,7 @@ class ImageProcessWorker(threading.Thread):
                 camera_axis.travel_to_position(position_mm=global_settings["camera_right_position"], rate_mm_s=global_settings["camera move_rate"])
                 led.blink(0xFF0000, 0.1, 1)
                 led.set_static_color(0xffffff)
-                time.sleep(0.5)
+                time.sleep(1)
                 
                 th_img = None
                 while th_img is None:
