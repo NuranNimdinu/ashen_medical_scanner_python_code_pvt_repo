@@ -554,7 +554,7 @@ if __name__ == "__main__":
     time.sleep(0.5)
     
     ## looking for program updates at startup
-    # check_for_updates_and_restart() #####################
+    check_for_updates_and_restart() #####################
     print("Starting Medical App...")
 
     ## initialize the LED indicator
