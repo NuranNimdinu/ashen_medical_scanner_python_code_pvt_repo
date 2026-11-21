@@ -24,35 +24,33 @@ class MLX90640_CAM_DRIVER:
     temp_png_frame = None
     save_folder = "thermal_csv"
     png_save_folder = "thermal_png"
-    filename_prefix = ""
 
     crop_x, crop_y = 0, 0      # Top-left corner of the crop area
     crop_w, crop_h = 0, 0      # Width and height of the crop area
 
-    def __init__(self, dev_addr = 0x33, file_name_p = "T", min_max_temp = (22.0, 0.0)):
+    def __init__(self, dev_addr = 0x33, min_max_temp = (22.0, 0.0)):
         self.i2c = busio.I2C(board.SCL, board.SDA)
         self.mlx = adafruit_mlx90640.MLX90640(self.i2c, dev_addr)
         # self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_0_5_HZ
         self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_4_HZ
-        self.filename_prefix = file_name_p
         self.min_max_temp = min_max_temp
 
-    def change_csv_save_path(self, png_path, csv_path):
+    def change_save_path(self, png_path, csv_path):
         self.png_save_folder = png_path
         self.save_folder = csv_path
         os.makedirs(self.save_folder, exist_ok=True)
         os.makedirs(self.png_save_folder, exist_ok=True)
 
-    def save_raw_csv(self):
+    def save_raw_csv(self, prefix="T"):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(self.save_folder, f"{self.filename_prefix}_thermal_raw_{timestamp}.csv")
+        filepath = os.path.join(self.save_folder, f"{prefix}thermal_raw_{timestamp}.csv")
         np.savetxt(filepath, self.temp_raw_frame, delimiter=",", fmt='%s')
         
         print(f"Successfully saved matrix to {filepath}")
 
-    def save_temp_png(self):
+    def save_temp_png(self, prefix="T"):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(self.png_save_folder, f"{self.filename_prefix}_thermal_img_{timestamp}.png")
+        filepath = os.path.join(self.png_save_folder, f"{prefix}thermal_img_{timestamp}.png")
         cv2.imwrite(filepath, self.temp_png_frame)
 
     def set_crop_range(self, x, y, w, h):
@@ -78,8 +76,7 @@ class MLX90640_CAM_DRIVER:
 
             self.temp_raw_frame = tframe
 
-            self.max_temp, self.min_temp = tframe.max(), tframe.min()#
-            
+            self.max_temp, self.min_temp = tframe.max(), tframe.min()
             rgb_frame = np.uint8((tframe - self.min_temp) * 255 / (self.max_temp - self.min_temp)) ## mapping to 0 - 255 from current temp range
 
             # rgb_frame = np.uint8((tframe - self.min_max_temp[0]) * 255 / (self.min_max_temp[1] - self.min_max_temp[0])) ## mapping to 0 - 255

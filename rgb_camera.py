@@ -49,7 +49,7 @@ class CAMERA_DRIVER:
             self.temp_image = self.cam_cap.read()
             return self.temp_image
         
-    def change_image_save_path(self, png_path, csv_path):
+    def change_save_path(self, png_path, csv_path):
         self.csv_save_folder = csv_path
         self.png_save_folder = png_path
         os.makedirs(self.png_save_folder, exist_ok=True)
@@ -57,7 +57,7 @@ class CAMERA_DRIVER:
         
     def save_image_png(self, prefix=""):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(self.png_save_folder, f"{prefix}{timestamp}_rgb.png")
+        filepath = os.path.join(self.png_save_folder, f"{prefix}rgb_{timestamp}.png")
         cv.imwrite(filepath, self.temp_image)
 
     def save_intensity_matrix(self):

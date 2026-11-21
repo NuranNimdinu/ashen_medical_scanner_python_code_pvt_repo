@@ -32,12 +32,15 @@ global_settings = {
     "MIN_TEMP" : 20.0,
     "MAX_TEMP" : 40.0,
     "THERMAL_MODEL_THREAHOLD" : 0.5,
-    "RGB_MODEL_THREAHOLD" : 0.5,
     "THERMAL_MODEL_PATH" : "/home/rasp4/Desktop/medical_scanner/medical_scanner/image_models/foot_model.tflite",
     "THERMAL_CONFIG_PATH" : "/home/rasp4/Desktop/medical_scanner/medical_scanner/image_models/thermal_config.json",
+    "RGB_MODEL_THREAHOLD" : 0.5,
     "RGB_MODEL_PATH" : "de",
     "RGB_MODEL_CLASS" : "wound",
     "save_images_base_path" : "medical_scanner_data/",
+    "camera_left_position" : 10.0,
+    "camera_right_position" : 200.0,
+    "camera move_rate" : 20.0,
 }
 
 class SERVER_DATA_STRUCT:
@@ -225,12 +228,13 @@ class ImageProcessWorker(threading.Thread):
                     
                     except queue.Full:
                         pass
-
-            # img_arr = [th_img, th_img, rgb_img, rgb_img]
-            # img_head_tag = ["tl", "tr", "cl", "cr"]
-
-
+            
+            ## if scanning
             if self.is_scanning is True:
+
+                ## move camera to the left and capture
+                led.set_static_color(0xFBFF00)
+                camera_axis.travel_to_position(position_mm=global_settings["camera_left_position"], rate_mm_s=global_settings["camera move_rate"])
                 led.blink(0xFF0000, 0.1, 1)
                 led.set_static_color(0xffffff)
                 time.sleep(0.5)
@@ -241,10 +245,72 @@ class ImageProcessWorker(threading.Thread):
 
                 _, rgb_img = rgb_camera.capture()
 
-                self.rgb_image_buffer.append
+                self.rgb_image_buffer.append(rgb_img)
+                self.thermal_raw_buffer.append(thermal_camera.temp_raw_frame)
+
+                img_arr = [th_img, rgb_img]
+                img_head_tag = ["tl", "cl"]
+
+                ## send to the web app
+                if self._ws_server.ws_camera_stream_on:
+                    try:
+                        for x, img in enumerate(img_arr): 
+                            if img is not None:
+                                _, img_buf = cv2.imencode('.jpg', img)
+                                img_buf = base64.b64encode(img_buf)
+                                img_buf = img_head_tag[x].encode() + img_buf
+                                self._ws_server.wss_camera_feed_q.put_nowait(img_buf)
+                    
+                    except queue.Full:
+                        pass
+
+                ## save captured data
+                thermal_camera.save_raw_csv("L_")
+                thermal_camera.save_temp_png("L_")
+                rgb_camera.save_image_png("L_")
+
+                ## move camera to the right and capture
+                led.set_static_color(0xFBFF00)
+                camera_axis.travel_to_position(position_mm=global_settings["camera_right_position"], rate_mm_s=global_settings["camera move_rate"])
+                led.blink(0xFF0000, 0.1, 1)
+                led.set_static_color(0xffffff)
+                time.sleep(0.5)
+                
+                th_img = None
+                while th_img is None:
+                    th_img = thermal_camera.get_image_with_temp_grd()
+
+                _, rgb_img = rgb_camera.capture()
+
+                self.rgb_image_buffer.append(rgb_img)
+                self.thermal_raw_buffer.append(thermal_camera.temp_raw_frame)
+
+                img_arr = [th_img, rgb_img]
+                img_head_tag = ["tr", "cr"]
+
+                ## send to the web app
+                if self._ws_server.ws_camera_stream_on:
+                    try:
+                        for x, img in enumerate(img_arr): 
+                            if img is not None:
+                                _, img_buf = cv2.imencode('.jpg', img)
+                                img_buf = base64.b64encode(img_buf)
+                                img_buf = img_head_tag[x].encode() + img_buf
+                                self._ws_server.wss_camera_feed_q.put_nowait(img_buf)
+                    
+                    except queue.Full:
+                        pass
+                
+                
+                thermal_camera.save_raw_csv("R_")
+                thermal_camera.save_temp_png("R_")
+                rgb_camera.save_image_png("R_")
+
+                self.is_scanning = False
+                time.sleep(5)
+                led.set_static_color(0x00E372)
 
                 # self.save_capture_data()
-
                 # thermal_label_L, thermal_conf_L, thermal_prob_L = self.thermal_predictor.predict(thermal_camera.temp_raw_frame, True, self.current_scan_num_folder_path, "TL")
                 # thermal_label_R, thermal_conf_R, thermal_prob_R = self.thermal_predictor.predict(thermal_camera_R.temp_raw_frame, True, self.current_scan_num_folder_path, "TR")
                 # rgb_label_L, rgb_conf_L, rgb_prob_L = self.rgb_predictor.predict(rgb_img, True, self.current_scan_num_folder_path, "RGBL")
@@ -255,24 +321,27 @@ class ImageProcessWorker(threading.Thread):
                 # self.current_scan_max_rgb_conf_L = rgb_conf_L >= self.current_scan_max_rgb_conf_L if rgb_conf_L else self.current_scan_max_rgb_conf_L
                 # self.current_scan_max_rgb_conf_R = rgb_conf_R >= self.current_scan_max_rgb_conf_R if rgb_conf_R else self.current_scan_max_rgb_conf_R
 
-                if self.current_scan_count >= global_settings["SCAN_SAVE_IMGS_NUM"]:
-                    self._done_scan()
+                # if self.current_scan_count >= global_settings["SCAN_SAVE_IMGS_NUM"]:
+                #     self._done_scan()
 
-                time.sleep(global_settings["SCAN_TIME_INTERVAL_SEC"])
+                # time.sleep(global_settings["SCAN_TIME_INTERVAL_SEC"])
 
             time.sleep(0.02)
 
     def start_scan(self):
-        ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Scan Starting..."}))
+        ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Scanning..."}))
         ws_tx_str(json.dumps({"T":"RESULT", "START": ""}))
         led.set_static_color(0xff0088)
 
-        self.current_scan_folder_path = create_unique_folder(global_settings["save_images_base_path"], "patient")
         self.current_scan_count = 0
         self.current_scan_max_thermal_conf_L = 0.0
         self.current_scan_max_thermal_conf_R = 0.0
         self.current_scan_max_rgb_conf_L = 0.0
         self.current_scan_max_rgb_conf_R = 0.0
+
+        self.current_scan_folder_path = create_unique_folder(global_settings["save_images_base_path"], "patient")
+        thermal_camera.change_save_path(self.current_scan_folder_path, self.current_scan_folder_path)
+        rgb_camera.change_save_path(self.current_scan_folder_path, self.current_scan_folder_path)
 
         time.sleep(1)
         self.is_scanning = True
@@ -292,35 +361,9 @@ class ImageProcessWorker(threading.Thread):
         time.sleep(3)
         led.set_static_color(0x008000)
         ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Ready!"}))
-        set_gpio(4, flash_state)
 
-    def save_capture_data(self):
-        self.current_scan_count += 1
 
-        ws_tx_str(json.dumps({"T":"STATUS", "DATA": f"Capturing... {self.current_scan_count}"}))
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(self.current_scan_folder_path, f"cap_{self.current_scan_count}_{timestamp}")
-        os.makedirs(filepath, exist_ok=True)
-        self.current_scan_num_folder_path = filepath
-
-        thermal_camera.change_csv_save_path(filepath, filepath)
-        thermal_camera.save_raw_csv()
-        thermal_camera.save_temp_png()
         
-        # thermal_camera_R.change_csv_save_path(filepath, filepath)
-        # thermal_camera_R.save_raw_csv()
-        # thermal_camera_R.save_temp_png()
-
-        rgb_camera.change_image_save_path(filepath, filepath)
-        rgb_camera.save_image_png("L_")
-        rgb_camera.save_intensity_matrix()
-        
-        # rgb_cameraR.change_image_save_path(filepath, filepath)
-        # rgb_cameraR.save_image_png("R_")
-        # rgb_cameraR.save_intensity_matrix()
-
-
 def ws_tx_str(msg):
     try:
         server_data.wss_data_tx_q.put_nowait(msg)
@@ -345,7 +388,7 @@ def ws_rx_data_handler(data):
     elif data["T"] == "FLASH":
         global flash_state
         flash_state = not flash_state
-        set_gpio(4, flash_state)
+        led.set_static_color(0xffffff if flash_state else 0x000000)
         
     elif data["T"] == "START":
         image_proc_tsk_handler.start_scan()
@@ -360,8 +403,6 @@ def ws_rx_data_handler(data):
         global_settings.update(data)
         json_cfg.save()
 
-        # thermal_camera.set_crop_range(*ast.literal_eval(global_settings["thermal L image crop"]))
-        # thermal_camera_R.set_crop_range(*ast.literal_eval(global_settings["thermal R image crop"]))
         print("saving json settings")
 
 
@@ -501,7 +542,6 @@ def check_app_ready():
         time.sleep(1)
 
     led.set_static_color(0x008000)
-    # set_gpio(4, flash_state)
 
 # Dictionary to keep the pin connections alive in memory
 _active_pins = {}

@@ -599,7 +599,7 @@
         let lastReceivedTR = Date.now();
         let lastReceivedCL = Date.now();
         let lastReceivedCR = Date.now();
-        const TIMEOUT_THRESHOLD = 10000; 
+        const TIMEOUT_THRESHOLD = 60000; 
 
         function connectWS() {
             websocket = new WebSocket(websocketAddress);
@@ -664,12 +664,12 @@
                             offlineTR.style.display = "none";
                             imgTR.src = "data:image/jpeg;base64," + data.slice(2);
                         }
-                        else if (type === 'cl') {
+                        else if (type === 'cr') {
                             lastReceivedCL = Date.now();
                             offlineCL.style.display = "none";
                             imgCL.src = "data:image/jpeg;base64," + data.slice(2);
                         }
-                        else if (type === 'cr') {
+                        else if (type === 'cl') {
                             lastReceivedCR = Date.now();
                             offlineCR.style.display = "none";
                             imgCR.src = "data:image/jpeg;base64," + data.slice(2);
