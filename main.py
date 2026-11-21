@@ -306,25 +306,7 @@ class ImageProcessWorker(threading.Thread):
                 thermal_camera.save_temp_png("R_")
                 rgb_camera.save_image_png("R_")
 
-                self.is_scanning = False
-                time.sleep(5)
-                led.set_static_color(0x00E372)
-
-                # self.save_capture_data()
-                # thermal_label_L, thermal_conf_L, thermal_prob_L = self.thermal_predictor.predict(thermal_camera.temp_raw_frame, True, self.current_scan_num_folder_path, "TL")
-                # thermal_label_R, thermal_conf_R, thermal_prob_R = self.thermal_predictor.predict(thermal_camera_R.temp_raw_frame, True, self.current_scan_num_folder_path, "TR")
-                # rgb_label_L, rgb_conf_L, rgb_prob_L = self.rgb_predictor.predict(rgb_img, True, self.current_scan_num_folder_path, "RGBL")
-                # rgb_label_R, rgb_conf_R, rgb_prob_R = self.rgb_predictor.predict(rgb_img_R, True, self.current_scan_num_folder_path, "RGBR")
-
-                # self.current_scan_max_thermal_conf_L = thermal_conf_L >= self.current_scan_max_thermal_conf_L if thermal_conf_L else self.current_scan_max_thermal_conf_L
-                # self.current_scan_max_thermal_conf_R = thermal_conf_R >= self.current_scan_max_thermal_conf_R if thermal_conf_R else self.current_scan_max_thermal_conf_R
-                # self.current_scan_max_rgb_conf_L = rgb_conf_L >= self.current_scan_max_rgb_conf_L if rgb_conf_L else self.current_scan_max_rgb_conf_L
-                # self.current_scan_max_rgb_conf_R = rgb_conf_R >= self.current_scan_max_rgb_conf_R if rgb_conf_R else self.current_scan_max_rgb_conf_R
-
-                # if self.current_scan_count >= global_settings["SCAN_SAVE_IMGS_NUM"]:
-                #     self._done_scan()
-
-                # time.sleep(global_settings["SCAN_TIME_INTERVAL_SEC"])
+                self._done_scan()
 
             time.sleep(0.02)
 
@@ -348,8 +330,16 @@ class ImageProcessWorker(threading.Thread):
 
     def _done_scan(self):
         self.is_scanning = False 
+        led.set_static_color(0x00E372)
 
-        if (self.current_scan_max_thermal_conf_L >= global_settings["THERMAL_MODEL_THREAHOLD"]) or (self.current_scan_max_thermal_conf_R >= global_settings["THERMAL_MODEL_THREAHOLD"]) or (self.current_scan_max_rgb_conf_L >= global_settings["RGB_MODEL_THREAHOLD"]) or (self.current_scan_max_rgb_conf_R >= global_settings["RGB_MODEL_THREAHOLD"]):
+        th_conf, th_label = self.thermal_predictor.predict(self.thermal_raw_buffer[0], self.thermal_raw_buffer[1])
+        # rgb_conf, rgb_label, rgb_info = self.WoundPredictor.predict(self.rgb_image_buffer[0], self.rgb_image_buffer[1], return_details=True)
+        rgb_conf = 0
+
+        self.rgb_image_buffer.clear()
+        self.thermal_raw_buffer.clear()
+
+        if (th_conf >= global_settings["THERMAL_MODEL_THREAHOLD"]) or (rgb_conf >= global_settings["RGB_MODEL_THREAHOLD"]):
             ws_tx_str(json.dumps({"T":"RESULT", "DATA": "DM / High Risk (Ulcer)"}))
             ws_tx_str(json.dumps({"T":"RESULT", "RISK": 0}))
 
@@ -358,6 +348,7 @@ class ImageProcessWorker(threading.Thread):
             ws_tx_str(json.dumps({"T":"RESULT", "RISK": 1}))
 
         ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Scan Completed!"}))
+
         time.sleep(3)
         led.set_static_color(0x008000)
         ws_tx_str(json.dumps({"T":"STATUS", "DATA": "Ready!"}))
@@ -573,7 +564,7 @@ if __name__ == "__main__":
         width=4,
         height=4,
         serpentine=True,
-        brightness=1,
+        brightness=0.6,
         spi_bus=1,
     )
     led.set_static_color(0xFF0000)
