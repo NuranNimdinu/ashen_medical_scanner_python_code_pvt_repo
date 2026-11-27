@@ -579,7 +579,7 @@ if __name__ == "__main__":
     
     ## initialize the cameras
     thermal_camera = MLX90640_CAM_DRIVER(0x33)
-    rgb_camera = CAMERA_DRIVER((1280, 720), rotation=90, raspCam=True, cameraID=0)
+    rgb_camera = CAMERA_DRIVER((1280, 720), rotation=0, raspCam=True, cameraID=0)
 
     ## initialize the server data structure
     server_data = SERVER_DATA_STRUCT()
